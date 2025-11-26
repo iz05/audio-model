@@ -15,7 +15,7 @@ from sklearn.metrics import accuracy_score
 
 
 ds_collections = {
-    'clothoaqa': {'path': 'data/st/clothoaqa_eval.jsonl'}
+    'clothoaqa': {'path': 'data/aqa/clothoaqa_eval.jsonl'}
 }
 
 
@@ -31,7 +31,8 @@ class AudioDataset(torch.utils.data.Dataset):
 
     def __getitem__(self, idx):
         data = json.loads(self.datas[idx].strip())
-        audio_path = data['audio']
+        # TODO PATCH PATH
+        audio_path = '/home/ixzhu/Qwen-Audio/eval_audio/data/aqa/' + data['audio']
         source = data['source']
         question = data['question']
         gt = data['gt']
@@ -135,6 +136,10 @@ if __name__ == '__main__':
     rets = []
     audio_paths = []
     for _, (input_ids, attention_mask, source, gt, audio_path, audio_info) in tqdm(enumerate(data_loader)):
+
+        if(_ % 100 ==0):
+            print(f"Processing {_} / {len(data_loader)}")
+
         output_ids = model.generate(
             input_ids=input_ids.cuda(),
             attention_mask=attention_mask.cuda(),
