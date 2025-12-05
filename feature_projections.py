@@ -69,19 +69,21 @@ class AudioFeatureProject(nn.Module):
     def forward(self, x):
         """
         x: audio waveform (batch, time)
-        returns: (batch, combined_seq_len, model_dim) suitable for LLM
+        returns: (batch, combined_seq_len, model_dim)
         """
+        device = next(self.parameters()).device  # get device of model weights
+
         # extract features
-        mel = mel_spectrogram(x, n_mels=80)        # (batch, n_mels, seq_len_mel)
-        mfcc_feat = mfcc(x, n_mfcc=40, n_mels=80)  # (batch, n_mfcc, seq_len_mfcc)
-        zcr_feat = zero_crossing_rate(x)           # (batch, 1, seq_len_zcr)
+        mel = mel_spectrogram(x, n_mels=80).to(device)        # (batch, n_mels, seq_len_mel)
+        mfcc_feat = mfcc(x, n_mfcc=40, n_mels=80).to(device)  # (batch, n_mfcc, seq_len_mfcc)
+        zcr_feat = zero_crossing_rate(x).to(device)           # (batch, 1, seq_len_zcr)
 
         # project each feature
-        mel_proj = self.mel_proj(mel)              # (batch, seq_len_mel, model_dim)
+        mel_proj = self.mel_proj(mel)              
         mfcc_proj = self.mfcc_proj(mfcc_feat)
         zcr_proj = self.zcr_proj(zcr_feat)
         
-        # concatenate along the sequence dimension
-        combined = torch.cat([mel_proj, mfcc_proj, zcr_proj], dim=1)  # (batch, total_seq_len, model_dim)
+        # concatenate along sequence dimension
+        combined = torch.cat([mel_proj, mfcc_proj, zcr_proj], dim=1)
         
-        return combined
+        return combine
