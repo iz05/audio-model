@@ -134,27 +134,32 @@ class QWenModelWithFeatures(QWenPreTrainedModel):
         return_dict: Optional[bool] = None,
         audio_info: Dict = None
     ):
+
         raw_audios = None
 
-        if past_key_values is None and torch.any(input_ids == self.config.audio['audio_start_id']):
+        if True: # TODO sus patch to force raw_audios to get assigned
+        # if past_key_values is None and torch.any(input_ids == self.config.audio['audio_start_id']):
             bos_pos = torch.where(input_ids == self.config.audio['audio_start_id'])
             eos_pos = torch.where(input_ids == self.config.audio['audio_start_id'] + 1)
             assert (bos_pos[0] == eos_pos[0]).all()
             audio_pos = torch.stack((bos_pos[0], bos_pos[1], eos_pos[1]), dim=1)
             if isinstance(audio_info, Dict):
-                raw_audios = audio_info["input_audios"]
+                raw_audios = audio_info['raw_audios']
+                audios = audio_info["input_audios"]
                 audio_span_tokens = audio_info["audio_span_tokens"]
                 input_audio_lengths = audio_info["input_audio_lengths"]
-                audios = self.audio.encode(raw_audios,input_audio_lengths, audio_span_tokens)
+                audios = self.audio.encode(audios,input_audio_lengths, audio_span_tokens)
             else:
-                raw_audios = torch.concat([_["input_audios"] for _ in audio_info])
+                raw_audios = torch.concat([_['raw_audios'] for _ in audio_info])
+                audios = torch.concat([_["input_audios"] for _ in audio_info])
                 input_audio_lengths = torch.concat([_["input_audio_lengths"] for _ in audio_info])
                 audio_span_tokens = []
                 for _ in audio_info:
                     audio_span_tokens.extend(_['audio_span_tokens'])
-                audios = self.audio.encode(raw_audios, input_audio_lengths, audio_span_tokens)
+                audios = self.audio.encode(audios, input_audio_lengths, audio_span_tokens)
 
         else:
+            print("Warning: not assigning raw_audios.")
             audios = None
 
         output_attentions = (
@@ -269,9 +274,9 @@ class QWenModelWithFeatures(QWenPreTrainedModel):
                     new_hidden_states.append(torch.cat([hidden_states[batch_idx], batch_proj], dim=0))
                 else:
                     new_hidden_states.append(hidden_states[batch_idx])
-            hidden_states = new_hidden_states
+            hidden_states = torch.nn.utils.rnn.pad_sequence(new_hidden_states, batch_first=True)
 
-        output_shape = input_shape + (hidden_states.size(-1),)
+        output_shape = hidden_states.shape
 
         if self.gradient_checkpointing and self.training:
             if use_cache:
@@ -418,11 +423,8 @@ class QWenLMHeadModelWithFeatures(QWenPreTrainedModel):
             **kwargs,
     ):
         if os.path.isdir(pretrained_model_name_or_path):
-            # Local Directory of Models
-            mel_filters_path = os.path.join(pretrained_model_name_or_path, 'mel_filters.npz')
-            print(mel_filters_path)
-            tgt_cache_path = os.path.join(os.path.dirname(__file__), 'mel_filters.npz')
-            shutil.copy(mel_filters_path, tgt_cache_path)
+            return super().from_pretrained(pretrained_model_name_or_path, *model_args,
+                                       config=config, cache_dir=cache_dir, **kwargs)
         else:
             # Loading from huggingface repo
             from huggingface_hub import hf_hub_download
@@ -449,7 +451,7 @@ class QWenLMHeadModelWithFeatures(QWenPreTrainedModel):
 
         attention_mask = kwargs.get("attention_mask", None)
         position_ids = kwargs.get("position_ids", None)
-
+        
         if attention_mask is not None and position_ids is None:
             position_ids = attention_mask.long().cumsum(-1) - 1
             position_ids.masked_fill_(attention_mask == 0, 1)
@@ -521,12 +523,28 @@ class QWenLMHeadModelWithFeatures(QWenPreTrainedModel):
         loss = None
         if labels is not None:
             labels = labels.to(lm_logits.device)
-            shift_logits = lm_logits[..., :-1, :].contiguous()
-            shift_labels = labels[..., 1:].contiguous()
-            loss_fct = CrossEntropyLoss()
-            loss = loss_fct(
-                shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1)
-            )
+
+            # TODO PATCH FOR QA FINETUNING - ONLY SUPERVISE ANSWER TOKEN
+            if True:
+                answer_len = labels.shape[-1]
+
+                answer_logits = lm_logits[:, -answer_len:, :]   # shape: (batch_size, answer_len, vocab_size)
+                answer_labels = labels.view(-1)                 # shape: (batch_size * answer_len,)
+
+                answer_logits = answer_logits.reshape(-1, answer_logits.shape[-1])  # (batch*answer_len, vocab)
+                answer_labels = labels.reshape(-1)
+                
+                loss_fct = CrossEntropyLoss()
+                loss = loss_fct(answer_logits, answer_labels)
+
+            else:
+                shift_logits = lm_logits[..., :-1, :].contiguous()
+                shift_labels = labels[..., 1:].contiguous()
+                loss_fct = CrossEntropyLoss()
+
+                loss = loss_fct(
+                    shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1)
+                )
 
         if not return_dict:
             output = (lm_logits,) + transformer_outputs[1:]

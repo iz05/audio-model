@@ -506,6 +506,7 @@ class QWenAttention(nn.Module):
             registered_causal_mask = torch.tril(
                 torch.ones((key.size(1), key.size(1)), dtype=torch.bool, device=key.device)
             ).view(1, 1, key.size(1), key.size(1))
+            # print("kms: ", query.shape, key.shape, registered_causal_mask.shape)
             query = query.permute(0, 2, 1, 3)
             if not self.use_cache_quantization:
                 key = key.permute(0, 2, 1, 3)
@@ -523,12 +524,15 @@ class QWenAttention(nn.Module):
                 causal_mask = registered_causal_mask[
                     :, :, key.size(-2) - query.size(-2): key.size(-2), :key.size(-2)
                 ]
-                if attention_mask is not None:
+                # if attention_mask is not None:
+                if False:
+                    # print("kms 2: ", attention_mask.shape)
                     attention_mask = attention_mask.expand(
                         -1, -1, causal_mask.size(2), -1
                     ).masked_fill(~causal_mask, torch.finfo(query.dtype).min)
                 else:
                     attention_mask = causal_mask
+                    # print("kms 3: ", attention_mask.shape)
                 attn_output = F.scaled_dot_product_attention(
                     query, key, value, attn_mask=attention_mask
                 ).transpose(1, 2)
@@ -1056,7 +1060,7 @@ class QWenLMHeadModel(QWenPreTrainedModel):
 
         attention_mask = kwargs.get("attention_mask", None)
         position_ids = kwargs.get("position_ids", None)
-
+        
         if attention_mask is not None and position_ids is None:
             position_ids = attention_mask.long().cumsum(-1) - 1
             position_ids.masked_fill_(attention_mask == 0, 1)
@@ -1404,6 +1408,13 @@ def apply_rotary_pos_emb(t, freqs):
         cos, sin = freqs
         t_, t_pass_ = t[..., :rot_dim], t[..., rot_dim:]
         t_ = t_.float()
+        num_features = 3 # TODO hard coded to be number of audio features
+        feature_length = (t_.shape[1] - cos.shape[1]) // num_features
+        feature_emb = RotaryEmbedding(cos.shape[3])
+        cos_append, sin_append = feature_emb(feature_length)
+        cos_append, sin_append = cos_append.to(cos.device), sin_append.to(sin.device)
+        cos = torch.cat([cos] + [cos_append] * num_features, dim=1)
+        sin = torch.cat([sin] + [sin_append] * num_features, dim=1)
         t_pass_ = t_pass_.float()
         t_ = (t_ * cos) + (_rotate_half(t_) * sin)
         return torch.cat((t_, t_pass_), dim=-1).type_as(t)

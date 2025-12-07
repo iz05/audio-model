@@ -24,10 +24,11 @@ from transformers import PreTrainedTokenizer, AddedToken
 from transformers.utils import try_to_load_from_cache
 from transformers.tokenization_utils_base import BatchEncoding, PaddingStrategy, TruncationStrategy, \
     TextInput, TextInputPair, PreTokenizedInput, PreTokenizedInputPair, TensorType, EncodedInput, EncodedInputPair
+from transformers import AutoTokenizer
 
 import matplotlib.colors as mcolors
 from matplotlib.font_manager import FontProperties
-from .audio import *
+from audio import *
 
 logger = logging.getLogger(__name__)
 
@@ -576,6 +577,72 @@ class QWenTokenizer(PreTrainedTokenizer):
             return None
 
 
+class QWenTokenizerRawAudio(QWenTokenizer):
 
+    def process_audio(self, text):
+        audio_urls = self.extract_audio_urls(text)
+        if len(audio_urls) > 0:
+            audios, audio_lens, audio_span_tokens = [], [], []
+            for audio_path in audio_urls:
+                if audio_path.startswith("http://") or audio_path.startswith("https://"):  # http
+                    data = bytes(requests.get(audio_path, stream=True).content)
+                    audio = load_bytesio_audio(data)
+                else:
+                    audio = load_audio(audio_path)
+                L = (audio.shape[0] if audio.shape[0] <= 480000 else 480000)  # max_length < 30s
+                mel_len = L // 160
+                audio = pad_or_trim(audio.flatten())
+                mel = log_mel_spectrogram(audio)
+                audio_len_after_cnn = get_T_after_cnn(mel_len)
+                audio_token_num = (audio_len_after_cnn - 2) // 2 + 1
+                audio_len = [audio_len_after_cnn, audio_token_num]
+                audios.append(mel)
+                audio_lens.append(audio_len)
+                audio_span_tokens.append(audio_token_num + 2)  # add audio bos eos
+            input_audio_lengths = torch.IntTensor(audio_lens)
+            input_audios = torch.stack(audios, dim=0)
+            return {"input_audios": input_audios,
+                    "input_audio_lengths": input_audio_lengths,
+                    "audio_span_tokens": audio_span_tokens,
+                    "audio_urls": audio_urls,
+                    "raw_audios": audio}
+        else:
+            return None
 
-
+    @classmethod
+    def from_pretrained(cls, pretrained_model_name_or_path, trust_remote_code=True):
+        """Load the pretrained QWen tokenizer and initialize this subclass."""
+        if os.path.isdir(pretrained_model_name_or_path):
+            # Example: load vocab_file from folder
+            vocab_file = os.path.join(pretrained_model_name_or_path, "vocab.json")
+            if not os.path.exists(vocab_file):
+                raise ValueError(f"No vocab file found in {pretrained_model_name_or_path}")
+            
+            tokenizer = cls(vocab_file=vocab_file)
+            
+            # Optionally load extra attributes saved in JSON
+            attrs_file = os.path.join(pretrained_model_name_or_path, "tokenizer_attrs.json")
+            if os.path.exists(attrs_file):
+                with open(attrs_file, "r") as f:
+                    attrs = json.load(f)
+                for k, v in attrs.items():
+                    setattr(tokenizer, k, v)
+            
+            return tokenizer
+        
+        # Load the pretrained tokenizer as a base
+        base_tokenizer = AutoTokenizer.from_pretrained(pretrained_model_name_or_path, trust_remote_code=True)
+        
+        # Create an instance of this subclass using the pretrained tokenizer's config
+        tokenizer = cls(vocab_file=base_tokenizer.vocab_files_names["vocab_file"])
+        
+        # Copy all relevant attributes from the base tokenizer
+        tokenizer.mergeable_ranks = base_tokenizer.mergeable_ranks
+        tokenizer.special_tokens = base_tokenizer.special_tokens
+        tokenizer.tokenizer = base_tokenizer.tokenizer
+        tokenizer.audio_start_id = base_tokenizer.audio_start_id
+        tokenizer.audio_end_id = base_tokenizer.audio_end_id
+        tokenizer.audio_pad_id = base_tokenizer.audio_pad_id
+        tokenizer.eod_id = base_tokenizer.eod_id
+        
+        return tokenizer

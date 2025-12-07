@@ -7,10 +7,12 @@ import pandas as pd
 from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from transformers.generation import GenerationConfig
+from tokenization_qwen import QWenTokenizerRawAudio
+import os
 
 DEVICE = "cuda"
 PRETRAINED_MODEL = "Qwen/Qwen-Audio"
-BATCH_SIZE = 2
+BATCH_SIZE = 1
 LR = 1e-4
 EPOCHS = 3
 MAX_SEQ_LEN = 512  # adjust if needed
@@ -55,7 +57,7 @@ class AudioQADataset(Dataset):
         }
 
 # --- 2. Load tokenizer and dataset ---
-tokenizer = AutoTokenizer.from_pretrained(PRETRAINED_MODEL, trust_remote_code=True)
+tokenizer = QWenTokenizerRawAudio.from_pretrained(PRETRAINED_MODEL, trust_remote_code=True)
 tokenizer.pad_token_id = tokenizer.eod_id
 if tokenizer.pad_token is None:
     tokenizer.pad_token = tokenizer.eos_token
@@ -91,41 +93,46 @@ scheduler = get_scheduler("linear", optimizer=optimizer, num_warmup_steps=0, num
 loss_fn = CrossEntropyLoss()
 
 # --- 5. Training loop ---
+losses = []
+save_dir = '/home/ixzhu/Qwen-Audio/checkpoints'
+
 model.train()
 for epoch in range(EPOCHS):
     print(f"Epoch {epoch+1}/{EPOCHS}")
     for batch in tqdm(dataloader):
-        # collate batch manually
-        pad_id = tokenizer.pad_token_id
-        input_ids = torch.nn.utils.rnn.pad_sequence(
-            [b['input_ids'] for b in batch],
-            batch_first=True,
-            padding_value=pad_id
-        ).to(DEVICE)
-        attention_mask = torch.nn.utils.rnn.pad_sequence(
-            [b['attention_mask'] for b in batch],
-            batch_first=True,
-            padding_value=0
-        ).to(DEVICE)
-        labels = torch.nn.utils.rnn.pad_sequence(
-            [b['labels'] for b in batch],
-            batch_first=True,
-            padding_value=-100
-        ).to(DEVICE)
-        audio_info = [b['audio_info'] for b in batch]
+        
+        try:
+            item = batch[0]
 
+            input_ids = item["input_ids"].unsqueeze(0).to(DEVICE)  # add batch dim
+            attention_mask = item["attention_mask"].unsqueeze(0).to(DEVICE)
+            labels = item["labels"].unsqueeze(0).to(DEVICE)
+            audio_info = item["audio_info"]
 
-        outputs = model(input_ids=input_ids, attention_mask=attention_mask, labels=labels, audio_info=audio_info)
-        loss = outputs.loss
+            outputs = model(input_ids=input_ids, attention_mask=attention_mask, labels=labels, audio_info=audio_info)
+            loss = outputs.loss
 
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
-        scheduler.step()
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+            scheduler.step()
+
+            losses.append(loss.item())
+        except Exception as e:
+            print(e)
+    
+    checkpoint_path = os.path.join(save_dir, f"checkpoint_epoch_{epoch+1}")
+    model.save_pretrained(checkpoint_path)
+    tokenizer.save_pretrained(checkpoint_path)
+    torch.save(optimizer.state_dict(), os.path.join(checkpoint_path, "optimizer.pt"))
+    torch.save(scheduler.state_dict(), os.path.join(checkpoint_path, "scheduler.pt"))
+    print(f"Saved checkpoint at end of epoch {epoch+1}")
 
     print(f"Epoch {epoch+1} finished. Last batch loss: {loss.item():.4f}")
 
 # --- 6. Save fine-tuned model ---
-model.save_pretrained("qwen_audio_mlp_finetuned")
-tokenizer.save_pretrained("qwen_audio_mlp_finetuned")
+final_path = os.path.join(save_dir, f"trained_model")
+model.save_pretrained(final_path)
+tokenizer.save_pretrained(final_path)
+torch.save(losses, os.path.join(final_path, "losses.pt"))
 print("Training complete. Model saved.")

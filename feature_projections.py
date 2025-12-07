@@ -8,11 +8,23 @@ import torch.nn.functional as F
 from audio_features import *
 
 # ----------------------------
+# Downsampler
+# ----------------------------
+class DownSample1D(nn.Module):
+    def __init__(self, in_channels, factor):
+        super().__init__()
+        self.conv = nn.Conv1d(in_channels, in_channels, kernel_size=factor, stride=factor)
+
+    def forward(self, x):
+        # x: (batch, channels, seq)
+        return self.conv(x)  # (batch, channels, seq // factor)
+
+# ----------------------------
 # Feature Projection Submodules
 # ----------------------------
 
 class MelProject(nn.Module):
-    def __init__(self, n_mels=80, model_dim=4096, hidden_dim=512):
+    def __init__(self, n_mels=80, model_dim=4096, hidden_dim=512, downsample_factor=16):
         super().__init__()
         self.proj = nn.Sequential(
             nn.Linear(n_mels, hidden_dim),
@@ -21,14 +33,16 @@ class MelProject(nn.Module):
             nn.ReLU(),
             nn.Linear(hidden_dim, model_dim)
         )
+        self.down = DownSample1D(n_mels, downsample_factor)
     
     def forward(self, x):
-        # x: (batch, n_mels, seq_len)
-        x = x.transpose(1,2)  # (batch, seq_len, n_mels)
-        return self.proj(x)  # (batch, seq_len, model_dim)
+        # x: (n_mels, seq_len)
+        x = self.down(x.unsqueeze(0)).squeeze(0)
+        x = x.transpose(0, 1)  # (seq_len, n_mels)
+        return self.proj(x)  # (seq_len, model_dim)
 
 class MFCCProject(nn.Module):
-    def __init__(self, n_mfcc=40, model_dim=4096, hidden_dim=512):
+    def __init__(self, n_mfcc=40, model_dim=4096, hidden_dim=512, downsample_factor=16):
         super().__init__()
         self.proj = nn.Sequential(
             nn.Linear(n_mfcc, hidden_dim),
@@ -37,22 +51,26 @@ class MFCCProject(nn.Module):
             nn.ReLU(),
             nn.Linear(hidden_dim, model_dim)
         )
+        self.down = DownSample1D(n_mfcc, downsample_factor)
     
     def forward(self, x):
-        x = x.transpose(1,2)  # (batch, seq_len, n_mfcc)
+        x = self.down(x.unsqueeze(0)).squeeze(0)
+        x = x.transpose(0, 1)  # (batch, seq_len, n_mfcc)
         return self.proj(x)  # (batch, seq_len, model_dim)
 
 class ZCRProject(nn.Module):
-    def __init__(self, model_dim=4096, hidden_dim=512):
+    def __init__(self, model_dim=4096, hidden_dim=512, downsample_factor=16):
         super().__init__()
         self.proj = nn.Sequential(
             nn.Linear(1, hidden_dim),
             nn.ReLU(),
             nn.Linear(hidden_dim, model_dim),
         )
+        self.down = DownSample1D(1, downsample_factor)
     
     def forward(self, x):
-        x = x.transpose(1,2)  # (batch, seq_len, 1)
+        x = self.down(x.unsqueeze(0)).squeeze(0)
+        x = x.transpose(0, 1)  # (batch, seq_len, 1)
         return self.proj(x)  # (batch, seq_len, model_dim)
 
 # ----------------------------
@@ -60,11 +78,11 @@ class ZCRProject(nn.Module):
 # ----------------------------
 
 class AudioFeatureProject(nn.Module):
-    def __init__(self, model_dim=4096, n_mels=80, n_mfcc=40):
+    def __init__(self, model_dim=4096, n_mels=80, n_mfcc=40, downsample_factor=16):
         super().__init__()
-        self.mel_proj = MelProject(n_mels=n_mels, model_dim=model_dim)
-        self.mfcc_proj = MFCCProject(n_mfcc=n_mfcc, model_dim=model_dim)
-        self.zcr_proj = ZCRProject(model_dim=model_dim)
+        self.mel_proj = MelProject(n_mels=n_mels, model_dim=model_dim, downsample_factor=downsample_factor)
+        self.mfcc_proj = MFCCProject(n_mfcc=n_mfcc, model_dim=model_dim, downsample_factor=downsample_factor)
+        self.zcr_proj = ZCRProject(model_dim=model_dim, downsample_factor=downsample_factor)
     
     def forward(self, x):
         """
@@ -74,9 +92,9 @@ class AudioFeatureProject(nn.Module):
         device = next(self.parameters()).device  # get device of model weights
 
         # extract features
-        mel = mel_spectrogram(x, n_mels=80).to(device)        # (batch, n_mels, seq_len_mel)
-        mfcc_feat = mfcc(x, n_mfcc=40, n_mels=80).to(device)  # (batch, n_mfcc, seq_len_mfcc)
-        zcr_feat = zero_crossing_rate(x).to(device)           # (batch, 1, seq_len_zcr)
+        mel = mel_spectrogram(x, n_mels=80, hop_length = 160, win_length = 400).to(torch.bfloat16).to(device)                                    # (batch, n_mels, seq_len_mel)
+        mfcc_feat = mfcc(x, n_mfcc=40, n_mels=80, hop_length = 160, win_length = 400).to(torch.bfloat16).to(device)                              # (batch, n_mfcc, seq_len_mfcc)
+        zcr_feat = zero_crossing_rate(x, zero_handling="positive", frame_length = 400, hop_length = 160).to(torch.bfloat16).to(device)           # (batch, 1, seq_len_zcr)
 
         # project each feature
         mel_proj = self.mel_proj(mel)              
@@ -84,6 +102,6 @@ class AudioFeatureProject(nn.Module):
         zcr_proj = self.zcr_proj(zcr_feat)
         
         # concatenate along sequence dimension
-        combined = torch.cat([mel_proj, mfcc_proj, zcr_proj], dim=1)
+        combined = torch.cat([mel_proj, mfcc_proj, zcr_proj], dim=0)
         
-        return combine
+        return combined.unsqueeze(0)
