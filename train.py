@@ -3,6 +3,7 @@ from torch.utils.data import Dataset, DataLoader
 from torch.nn import CrossEntropyLoss
 from transformers import AutoTokenizer, AdamW, get_scheduler
 from audio_feature_model import QWenLMHeadModelWithFeatures
+from audio_feature_cnn import QWenLMHeadModelWithCNN
 import pandas as pd
 from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -23,15 +24,20 @@ AUDIO_ROOT = "/home/ixzhu/Qwen-Audio/eval_audio/data/aqa/clothoqa/audio_files/"
 class AudioQADataset(Dataset):
     def __init__(self, csv_path, tokenizer):
         self.df = pd.read_csv(csv_path)
+
+        self.df = self.df.sample(frac=1, random_state=42).reset_index(drop=True)
+        half = len(self.df) // 2
+        self.df = self.df.iloc[:half]      # keep first half only
+
         self.tokenizer = tokenizer
         self.data = []
         for _, row in self.df.iterrows():
             audio_file = AUDIO_ROOT + row['file_name']
             question = row['QuestionText']
-            answer = row['answer']
+            answer = row['answer'] + "<|endoftext|>"
 
             # same prompt format as eval
-            prompt = f"<audio>{audio_file}</audio><|startofanalysis|><|en|><|question|>{question}<|answer|>"
+            prompt = f"<audio>{audio_file}</audio><|startofanalysis|><|en|><|question|>{question}<|answer|>{answer}"
             self.data.append((prompt, answer, audio_file))
 
     def __len__(self):
@@ -70,10 +76,11 @@ dataset = AudioQADataset("/home/ixzhu/Qwen-Audio/eval_audio/data/aqa/clotho_aqa_
 dataloader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True, collate_fn=lambda x: x)
 
 # --- 3. Load pretrained model and initialize with features ---
+MODEL_TYPE = 'MLP'
 pretrained_base = AutoModelForCausalLM.from_pretrained("Qwen/Qwen-Audio", device_map="cuda", trust_remote_code=True).eval()
 config = pretrained_base.config
 print("Initializing model...")
-model = QWenLMHeadModelWithFeatures(config).to(DEVICE)
+model = QWenLMHeadModelWithCNN(config).to(DEVICE)
 print("Finished intializing model.")
 
 # Load pretrained weights into matching parameters
@@ -88,7 +95,7 @@ print("Finished transferring weights.")
 # Freeze everything except audio_feature_project
 print("Freezing weights...")
 for name, param in model.named_parameters():
-    param.requires_grad = "audio_feature_project" in name
+    param.requires_grad = "audio_feature_cnn" in name
 print("Finished freezing weights.")
 
 # --- 4. Optimizer & scheduler ---
@@ -99,12 +106,13 @@ loss_fn = CrossEntropyLoss()
 
 # --- 5. Training loop ---
 losses = []
-save_dir = '/home/ixzhu/Qwen-Audio/checkpoints'
+save_dir = f'/home/ixzhu/Qwen-Audio/checkpoints_{MODEL_TYPE}'
 
 model.train()
 for epoch in range(EPOCHS):
     print(f"Epoch {epoch+1}/{EPOCHS}")
-    for batch in tqdm(dataloader):
+    pbar = tqdm(dataloader)
+    for batch in pbar:
         
         try:
             item = batch[0]
@@ -123,6 +131,8 @@ for epoch in range(EPOCHS):
             scheduler.step()
 
             losses.append(loss.item())
+            pbar.set_postfix({'loss': f'{loss.item():.4f}'})
+
         except Exception as e:
             print(e)
     
@@ -131,7 +141,13 @@ for epoch in range(EPOCHS):
     tokenizer.save_pretrained(checkpoint_path)
     torch.save(optimizer.state_dict(), os.path.join(checkpoint_path, "optimizer.pt"))
     torch.save(scheduler.state_dict(), os.path.join(checkpoint_path, "scheduler.pt"))
-    torch.save(losses, os.path.join(checkpoint_path, "losses.pt"))
+    
+    # save losses
+    loss_log_path = os.path.join(checkpoint_path, "losses.txt")
+    with open(loss_log_path, "w") as f:
+        for l in losses:
+            f.write(f"{l}\n")
+
     print(f"Saved checkpoint at end of epoch {epoch+1}")
 
     print(f"Epoch {epoch+1} finished. Last batch loss: {loss.item():.4f}")

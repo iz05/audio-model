@@ -17,7 +17,7 @@ if tokenizer.pad_token is None:
     tokenizer.pad_token = tokenizer.eos_token
 
 # load model
-save_dir = '/home/ixzhu/Qwen-Audio/checkpoints/checkpoint_step_10'
+save_dir = '/home/ixzhu/Qwen-Audio/checkpoints/checkpoint_epoch_1'
 model = QWenLMHeadModelWithFeatures.from_pretrained(save_dir, device_map="cuda", trust_remote_code=True).eval()
 model.eval()
 

@@ -10,7 +10,7 @@ from torch.nn import CrossEntropyLoss
 from transformers import PreTrainedTokenizer, GenerationConfig, StoppingCriteriaList
 from transformers.generation.logits_process import LogitsProcessorList
 
-from feature_projections import AudioFeatureProject
+from feature_cnns import AudioFeatureCNN
 from modeling_qwen import *
 
 _SENTINEL = object()
@@ -51,7 +51,7 @@ def _import_flash_attn():
             "https://github.com/Dao-AILab/flash-attention"
         )
         
-class QWenModelWithFeatures(QWenPreTrainedModel):
+class QWenModelCNN(QWenPreTrainedModel):
     _keys_to_ignore_on_load_missing = ["attn.masked_bias"]
 
     def __init__(self, config):
@@ -69,7 +69,7 @@ class QWenModelWithFeatures(QWenPreTrainedModel):
 
         self.drop = nn.Dropout(config.emb_dropout_prob)
 
-        self.audio_feature_project = AudioFeatureProject(model_dim=self.embed_dim)
+        self.audio_feature_cnn = AudioFeatureCNN(model_dim=self.embed_dim)
 
         if config.rotary_pct == 1.0:
             self.rotary_ndims = None
@@ -263,7 +263,7 @@ class QWenModelWithFeatures(QWenPreTrainedModel):
             for idx, (i, a, b) in enumerate(audio_pos):
                 hidden_states[i][a : b+1] = audios[idx]
         if raw_audios is not None:
-            projected_features = self.audio_feature_project(raw_audios)  # [total_audio_tokens, embed_dim]
+            projected_features = self.audio_feature_cnn(raw_audios)  # [total_audio_tokens, embed_dim]
 
             new_hidden_states = []
             for batch_idx in range(hidden_states.size(0)):
@@ -352,7 +352,7 @@ class QWenModelWithFeatures(QWenPreTrainedModel):
         )
 
 
-class QWenLMHeadModelWithFeatures(QWenPreTrainedModel):
+class QWenLMHeadModelWithCNN(QWenPreTrainedModel):
     _keys_to_ignore_on_load_missing = [r"h\.\d+\.attn\.rotary_emb\.inv_freq"]
     _keys_to_ignore_on_load_unexpected = [r"h\.\d+\.attn\.masked_bias"]
 
@@ -402,7 +402,7 @@ class QWenLMHeadModelWithFeatures(QWenPreTrainedModel):
         if config.use_flash_attn:
             _import_flash_attn()
 
-        self.transformer = QWenModelWithFeatures(config)
+        self.transformer = QWenModelCNN(config)
         self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
 
         if config.bf16:
