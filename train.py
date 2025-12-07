@@ -131,6 +131,7 @@ for epoch in range(EPOCHS):
     tokenizer.save_pretrained(checkpoint_path)
     torch.save(optimizer.state_dict(), os.path.join(checkpoint_path, "optimizer.pt"))
     torch.save(scheduler.state_dict(), os.path.join(checkpoint_path, "scheduler.pt"))
+    torch.save(losses, os.path.join(checkpoint_path, "losses.pt"))
     print(f"Saved checkpoint at end of epoch {epoch+1}")
 
     print(f"Epoch {epoch+1} finished. Last batch loss: {loss.item():.4f}")
