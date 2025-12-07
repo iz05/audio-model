@@ -2,7 +2,6 @@ from typing import Optional, Union, Any
 import numpy as np
 import torch
 import torchaudio
-import librosa
 
 def mel_spectrogram(
     audio: Union[np.ndarray, torch.Tensor],
@@ -122,19 +121,16 @@ def forward_fill(
     Returns:
         torch.Tensor: Tensor with to_fill values forward filled.
     """
-    
-    l = input.size(-1)
-    stack = torch.stack([input.clone() for _ in range(l)], dim=-2)
-    tril_mask = torch.ones_like(stack, dtype=bool).tril()
-    stack = stack.where(tril_mask, to_fill)
 
     if isinstance(to_fill, float) and np.isnan(to_fill):
-        mask = (torch.isnan(stack)).logical_not()
+        mask = ~torch.isnan(input)
     else:
-        mask = (stack == to_fill).logical_not()
-
-    indices = l - 1 - mask.flip(-1).int().argmax(dim=-1, keepdim=True)
-    return stack.gather(dim=-1, index = indices).squeeze(-1)
+        mask = input != to_fill
+    
+    idx = torch.arange(input.size(-1), device = input.device)
+    masked_idx = idx.where(mask, torch.zeros_like(idx))
+    filled_idx, _ = masked_idx.cummax(dim=-1)
+    return input.gather(-1, filled_idx)
 
 def backward_fill(
     input: torch.Tensor,
@@ -150,19 +146,7 @@ def backward_fill(
     Returns:
         torch.Tensor: Tensor with to_fill values backward filled.
     """
-    
-    l = input.size(-1)
-    stack = torch.stack([input.clone() for _ in range(l)], dim=-2)
-    triu_mask = torch.ones_like(stack, dtype=bool).triu()
-    stack = stack.where(triu_mask, to_fill)
-
-    if isinstance(to_fill, float) and np.isnan(to_fill):
-        mask = (torch.isnan(stack)).logical_not()
-    else:
-        mask = (stack == to_fill).logical_not()
-
-    indices = mask.int().argmax(dim=-1, keepdim=True)
-    return stack.gather(dim=-1, index = indices).squeeze(-1)
+    return forward_fill(input.flip(-1), to_fill).flip(-1)
 
 def zero_crossing_rate(
     audio: Union[np.ndarray, torch.Tensor],
@@ -186,21 +170,19 @@ def zero_crossing_rate(
             - 'backward_fill': Fill silent frames with the next valid value.
             - 'positive': Treat silent frames as positive.
             - 'negative': Treat silent frames as negative.
-            - 'zero': Treat silent frames as zero, their own sign (Both + -> 0 and - -> 0 count as sign crossings.)
+            - 'unsigned': Treat silent frams as unsigned. (No crossings occur around any silent frame.)
 
     Returns:
         torch.Tensor: Extracted zero crossing rate features.
         Note: the output has shape (..., 1, T) where T is the number of frames.
-
-    WARNING: This function uses librosa and may not be optimized for GPU usage.
     """
     try:
-        if zero_handling not in ['forward_fill', 'backward_fill', 'positive', 'negative', 'zero']:
+        if zero_handling not in ['forward_fill', 'backward_fill', 'positive', 'negative', 'unsigned']:
             raise ValueError(f"Invalid zero_handling method: {zero_handling}")
-        
+
         if isinstance(audio, np.ndarray):
             audio = torch.tensor(audio, dtype=torch.float32)
-        
+
         clipped_audio = audio.where(audio.abs() >= threshold, 0.0)
         if zero_handling == 'forward_fill':
             clipped_audio = forward_fill(clipped_audio, to_fill=0.0)
@@ -212,17 +194,20 @@ def zero_crossing_rate(
             clipped_audio = clipped_audio.where(clipped_audio != 0.0, -threshold - 1)
 
         device = clipped_audio.device
-        clipped_audio = clipped_audio.cpu().numpy()
 
-        features = librosa.feature.zero_crossing_rate(
-            y=clipped_audio,
-            frame_length=frame_length,
-            hop_length=hop_length,
-            center=center,
-            threshold=threshold,
-            zero_pos=False,
-        )
-        return torch.Tensor(features).to(device)
+        shape = clipped_audio.shape
+        if len(shape) == 1:
+            clipped_audio = clipped_audio.unsqueeze(dim=0)
+        else:
+            clipped_audio = clipped_audio.reshape(-1, clipped_audio.size(-1))
+        
+        crossings = ((clipped_audio[..., :-1] * clipped_audio[..., 1:]) < 0).float()
+        if center:
+            zeros = torch.zeros(crossings.shape[:-1] + (frame_length // 2,))
+            crossings = torch.cat([zeros, crossings, zeros], dim = -1)
+        avgs = torch.nn.functional.avg_pool1d(crossings, kernel_size = frame_length - 1, stride = hop_length)
+        return (avgs * (1 - 1/frame_length)).reshape(*shape[:-1], 1, -1)
+
     except Exception as e:
         raise Exception(f"Error occurred during zero crossing rate extraction: {e}")
 

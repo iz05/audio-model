@@ -5,12 +5,12 @@ import torch
 # so just testing the fill functions and zcr here
 
 def test_fills():
-    t = torch.Tensor([[[1, 4, 0, 0, 2, 0, 7], 
-                       [6, 4, 13, 3, 9, 10, 8]], 
-                       
+    t = torch.Tensor([[[1, 4, 0, 0, 2, 0, 7],
+                       [6, 4, 13, 3, 9, 10, 8]],
+
                       [[0, 0, 0, 0, 0, 0, 0],
                        [0, 12, 0, 5, 0, 0, 0]]])
-    
+
     expected_forward = torch.Tensor([[[1, 4, 4, 4, 2, 2, 7],
                                       [6, 4, 13, 3, 9, 10, 8]],
 
@@ -21,7 +21,7 @@ def test_fills():
 
                                       [[0, 0, 0, 0, 0, 0, 0],
                                        [12, 12, 5, 5, 0, 0, 0]]])
-    
+
     assert torch.equal(forward_fill(t), expected_forward), "Forward fill did not match expected output."
     assert torch.equal(backward_fill(t), expected_backward), "Backward fill did not match expected output."
 
@@ -47,7 +47,7 @@ def test_zcr():
         'backward_fill': torch.Tensor([[0.25, 0.25, 0.25, 0.5, 0.25]]),
         'positive': torch.Tensor([[0.0, 0.5, 0.75, 0.5, 0.25]]),
         'negative': torch.Tensor([[0.25, 0.25, 0.0, 0.5, 0.25]]),
-        'zero': torch.Tensor([[0.25, 0.75, 0.75, 0.75, 0.25]]),
+        'unsigned': torch.Tensor([[0, 0, 0, 0.25, 0.25]]),
     }
 
     for zero_handling, exp in expected.items():
@@ -57,17 +57,29 @@ def test_zcr():
     # test remaining parameters
     b = torch.Tensor([[[1, -0.3, -0.1, 0.3],
                        [-0.1, 0.1, 0.5, -1]],
-                       
+
                       [[-1, 0.1, -0.1, 1],
                        [0.1, -1, 0.4, 0.3]]])
-    
+
     zcr_b = zero_crossing_rate(b, frame_length=3, hop_length=1, threshold=0.2, center=False)
     expected_b = torch.Tensor([[[[1/3, 1/3]],
-                                [[1/3, 2/3]]],
+                                [[0, 1/3]]],
 
                                [[[0, 1/3]],
-                                [[2/3, 1/3]]]])
+                                [[1/3, 1/3]]]])
     assert torch.allclose(zcr_b, expected_b), "ZCR with different parameters did not match expected output."
+
+    # test when hop_length does not divide frame_length
+    c = torch.Tensor([1, -1, -1, -1, 1, 1, -1, 1, -1, -1, 1, -1, -1])
+
+    expected_c = torch.Tensor([[0.2, 0.2, 0.6, 0.6, 0.2]])
+    expected_c_no_center = torch.Tensor([[0.4, 0.6, 0.6]])
+
+    zcr_c = zero_crossing_rate(c, frame_length=5, hop_length=3)
+    zcr_c_no_center = zero_crossing_rate(c, frame_length=5, hop_length=3, center=False)
+    assert torch.allclose(zcr_c, expected_c), "ZCR with hop_length not dividing length did not match expected output."
+    assert torch.allclose(zcr_c_no_center, expected_c_no_center), "ZCR with no centering and hop_length not dividing length did not match expected output."
+    
 
 test_fills()
 test_zcr()
