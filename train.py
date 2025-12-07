@@ -38,23 +38,28 @@ class AudioQADataset(Dataset):
         return len(self.data)
 
     def __getitem__(self, idx):
-        prompt, answer, audio_file = self.data[idx]
 
-        # process audio for the tokenizer
-        audio_info = self.tokenizer.process_audio(prompt)
-        inputs = self.tokenizer(prompt, return_tensors='pt', audio_info=audio_info)
-        input_ids = inputs['input_ids'].squeeze(0)
-        attention_mask = inputs['attention_mask'].squeeze(0)
+        try:
+            prompt, answer, audio_file = self.data[idx]
 
-        # tokenize answer
-        labels = self.tokenizer(answer, return_tensors='pt').input_ids.squeeze(0)
+            # process audio for the tokenizer
+            audio_info = self.tokenizer.process_audio(prompt)
+            inputs = self.tokenizer(prompt, return_tensors='pt', audio_info=audio_info)
+            input_ids = inputs['input_ids'].squeeze(0)
+            attention_mask = inputs['attention_mask'].squeeze(0)
 
-        return {
-            'input_ids': input_ids,
-            'attention_mask': attention_mask,
-            'labels': labels,
-            'audio_info': audio_info
-        }
+            # tokenize answer
+            labels = self.tokenizer(answer, return_tensors='pt').input_ids.squeeze(0)
+
+            return {
+                'input_ids': input_ids,
+                'attention_mask': attention_mask,
+                'labels': labels,
+                'audio_info': audio_info
+            }
+
+        except Exception as e:
+            print(e)
 
 # --- 2. Load tokenizer and dataset ---
 tokenizer = QWenTokenizerRawAudio.from_pretrained(PRETRAINED_MODEL, trust_remote_code=True)
