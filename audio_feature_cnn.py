@@ -271,7 +271,7 @@ class QWenModelCNN(QWenPreTrainedModel):
                 batch_indices = [idx for idx, (i, a, b) in enumerate(audio_pos) if i == batch_idx]
                 if batch_indices:
                     batch_proj = torch.cat([projected_features[idx] for idx in batch_indices], dim=0)
-                    new_hidden_states.append(torch.cat([hidden_states[batch_idx], batch_proj], dim=0))
+                    new_hidden_states.append(torch.cat([batch_proj, hidden_states[batch_idx]], dim=0))
                 else:
                     new_hidden_states.append(hidden_states[batch_idx])
             hidden_states = torch.nn.utils.rnn.pad_sequence(new_hidden_states, batch_first=True)
@@ -527,12 +527,11 @@ class QWenLMHeadModelWithCNN(QWenPreTrainedModel):
             # TODO PATCH FOR QA FINETUNING - ONLY SUPERVISE ANSWER TOKEN
             if True:
                 answer_len = labels.shape[-1]
+                
+                answer_logits = lm_logits[:, -1:, :]
+                answer_labels = labels[:, :1].view(-1)                     # shape: (batch_size,)
 
-                answer_logits = lm_logits[:, -answer_len:, :]   # shape: (batch_size, answer_len, vocab_size)
-                answer_labels = labels.view(-1)                     # shape: (batch_size * answer_len,)
-
-                answer_logits = answer_logits.reshape(-1, answer_logits.shape[-1])  # (batch*answer_len, vocab)
-                answer_labels = labels.reshape(-1)
+                answer_logits = answer_logits.reshape(-1, answer_logits.shape[-1])  # (batch, vocab)
                 
                 loss_fct = CrossEntropyLoss()
                 loss = loss_fct(answer_logits, answer_labels)

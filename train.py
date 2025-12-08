@@ -34,10 +34,10 @@ class AudioQADataset(Dataset):
         for _, row in self.df.iterrows():
             audio_file = AUDIO_ROOT + row['file_name']
             question = row['QuestionText']
-            answer = row['answer'] + "<|endoftext|>"
+            answer = row['answer']
 
             # same prompt format as eval
-            prompt = f"<audio>{audio_file}</audio><|startofanalysis|><|en|><|question|>{question}<|answer|>{answer}"
+            prompt = f"<audio>{audio_file}</audio><|startofanalysis|><|en|><|question|>{question}<|answer|>"
             self.data.append((prompt, answer, audio_file))
 
     def __len__(self):
@@ -65,7 +65,7 @@ class AudioQADataset(Dataset):
             }
 
         except Exception as e:
-            print(e)
+            print(f"Dataset error: {e}")
 
 # --- 2. Load tokenizer and dataset ---
 tokenizer = QWenTokenizerRawAudio.from_pretrained(PRETRAINED_MODEL, trust_remote_code=True)
@@ -80,7 +80,7 @@ MODEL_TYPE = 'MLP'
 pretrained_base = AutoModelForCausalLM.from_pretrained("Qwen/Qwen-Audio", device_map="cuda", trust_remote_code=True).eval()
 config = pretrained_base.config
 print("Initializing model...")
-model = QWenLMHeadModelWithCNN(config).to(DEVICE)
+model = QWenLMHeadModelWithFeatures(config).to(DEVICE)
 print("Finished intializing model.")
 
 # Load pretrained weights into matching parameters
@@ -95,7 +95,7 @@ print("Finished transferring weights.")
 # Freeze everything except audio_feature_project
 print("Freezing weights...")
 for name, param in model.named_parameters():
-    param.requires_grad = "audio_feature_cnn" in name
+    param.requires_grad = "audio_feature_proj" in name
 print("Finished freezing weights.")
 
 # --- 4. Optimizer & scheduler ---
@@ -134,7 +134,7 @@ for epoch in range(EPOCHS):
             pbar.set_postfix({'loss': f'{loss.item():.4f}'})
 
         except Exception as e:
-            print(e)
+            print(f"Training loop error: {e}")
     
     checkpoint_path = os.path.join(save_dir, f"checkpoint_epoch_{epoch+1}")
     model.save_pretrained(checkpoint_path)
@@ -156,5 +156,8 @@ for epoch in range(EPOCHS):
 final_path = os.path.join(save_dir, f"trained_model")
 model.save_pretrained(final_path)
 tokenizer.save_pretrained(final_path)
-torch.save(losses, os.path.join(final_path, "losses.pt"))
+loss_log_path = os.path.join(final_path, "losses.txt")
+with open(loss_log_path, "w") as f:
+    for l in losses:
+        f.write(f"{l}\n")
 print("Training complete. Model saved.")
