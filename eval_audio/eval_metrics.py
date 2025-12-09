@@ -1,6 +1,7 @@
 import argparse
 import json
-from difflib import SequenceMatcher
+from sentence_transformers import SentenceTransformer, util
+import torch
 
 
 DEFAULT_RESULTS_FILE = "eval_audio/results/eval_results.json"
@@ -43,6 +44,28 @@ def is_near_match(gt: str, response: str) -> bool:
     return False
 
 
+sem_model = SentenceTransformer("sentence-transformers/all-mpnet-base-v2")
+def semantic_score(gt_list, response: str) -> float:
+    """
+    Returns the max cosine similarity between response and any GT in gt_list.
+    Assumes gt_list is a list of (already-normalized) strings.
+    """
+    if not gt_list or not response:
+        return 0.0
+
+    # Encode: sem_model returns torch.Tensor
+    texts = gt_list + [response]
+    embeddings = sem_model.encode(texts, convert_to_tensor=True)  # shape (N+1, d)
+
+    gt_embs = embeddings[:-1]     # shape (N, d)
+    resp_emb = embeddings[-1:]    # shape (1, d)
+
+    # Cosine similarity between response and each GT
+    sims = util.cos_sim(resp_emb, gt_embs)  # shape (1, N)
+    max_sim = torch.max(sims).item()
+    return float(max_sim)
+
+
 def is_semantic_match(gt: str, response: str, threshold: float = 0.8) -> bool:
     """
     Semantic match via string similarity heuristic.
@@ -53,10 +76,7 @@ def is_semantic_match(gt: str, response: str, threshold: float = 0.8) -> bool:
     if not gt or not norm_response:
         return False
     
-    for gt_str in gt:
-        if SequenceMatcher(None, gt_str, norm_response).ratio() > threshold:
-            return True
-    return False
+    return semantic_score(gt, norm_response) > threshold
 
 
 def main():
