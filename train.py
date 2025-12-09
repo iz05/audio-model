@@ -15,7 +15,7 @@ DEVICE = "cuda"
 PRETRAINED_MODEL = "Qwen/Qwen-Audio"
 BATCH_SIZE = 1
 LR = 1e-4
-EPOCHS = 3
+EPOCHS = 2
 MAX_SEQ_LEN = 512  # adjust if needed
 
 AUDIO_ROOT = "/home/ixzhu/Qwen-Audio/eval_audio/data/aqa/clothoqa/audio_files/"
@@ -151,13 +151,3 @@ for epoch in range(EPOCHS):
     print(f"Saved checkpoint at end of epoch {epoch+1}")
 
     print(f"Epoch {epoch+1} finished. Last batch loss: {loss.item():.4f}")
-
-# --- 6. Save fine-tuned model ---
-final_path = os.path.join(save_dir, f"trained_model")
-model.save_pretrained(final_path)
-tokenizer.save_pretrained(final_path)
-loss_log_path = os.path.join(final_path, "losses.txt")
-with open(loss_log_path, "w") as f:
-    for l in losses:
-        f.write(f"{l}\n")
-print("Training complete. Model saved.")
