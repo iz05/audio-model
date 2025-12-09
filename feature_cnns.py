@@ -34,12 +34,14 @@ class MelCNN(nn.Module):
             nn.Conv1d(hidden_dim, model_dim, kernel_size=1, stride=1, padding=0)
         )
         self.down = DownSample1D(n_mels, downsample_factor)
-    
+
     def forward(self, x):
         # x: (n_mels, seq_len)
-        x = self.down(x.unsqueeze(0)).squeeze(0)
-        # x = x.transpose(0, 1)  # (seq_len, n_mels)
-        return self.proj(x)  # (seq_len, model_dim)
+        x = self.down(x.unsqueeze(0))  # (1, n_mels, seq_len)
+        x = self.proj(x)  # (1, model_dim, seq_len)
+        x = x.transpose(1,2).squeeze(0)  # (seq_len, model_dim)
+        return x
+
 
 class MFCCCNN(nn.Module):
     def __init__(self, n_mfcc=40, model_dim=4096, hidden_dim=512, downsample_factor=16):
@@ -52,11 +54,14 @@ class MFCCCNN(nn.Module):
             nn.Conv1d(hidden_dim, model_dim, kernel_size=1, stride=1, padding=0)
         )
         self.down = DownSample1D(n_mfcc, downsample_factor)
-    
+
     def forward(self, x):
-        x = self.down(x.unsqueeze(0)).squeeze(0)
-        # x = x.transpose(0, 1)  # (batch, seq_len, n_mfcc)
-        return self.proj(x)  # (batch, seq_len, model_dim)
+        # x: (n_mfcc, seq_len)
+        x = self.down(x.unsqueeze(0))  # (1, n_mfcc, seq_len)
+        x = self.proj(x)  # (1, model_dim, seq_len)
+        x = x.transpose(1,2).squeeze(0)  # (seq_len, model_dim)
+        return x
+
 
 class ZCRCNN(nn.Module):
     def __init__(self, model_dim=4096, hidden_dim=512, downsample_factor=16):
@@ -67,11 +72,14 @@ class ZCRCNN(nn.Module):
             nn.Conv1d(hidden_dim, model_dim, kernel_size=1, stride=1, padding=0)
         )
         self.down = DownSample1D(1, downsample_factor)
-    
+
     def forward(self, x):
-        x = self.down(x.unsqueeze(0)).squeeze(0)
-        # x = x.transpose(0, 1)  # (batch, seq_len, 1)
-        return self.proj(x)  # (batch, seq_len, model_dim)
+        # x: (1, seq_len)
+        x = self.down(x.unsqueeze(0))  # (1, 1, seq_len)
+        x = self.proj(x)  # (1, model_dim, seq_len)
+        x = x.transpose(1,2).squeeze(0)  # (seq_len, model_dim)
+        return x
+
 
 # ----------------------------
 # Main Audio Feature CNN
@@ -97,9 +105,9 @@ class AudioFeatureCNN(nn.Module):
         zcr_feat = zero_crossing_rate(x, zero_handling="positive", frame_length = 400, hop_length = 160).to(torch.bfloat16).to(device)           # (batch, 1, seq_len_zcr)
 
         # project each feature
-        mel_proj = self.mel_proj(mel).transpose(0, 1)           
-        mfcc_proj = self.mfcc_proj(mfcc_feat).transpose(0, 1)
-        zcr_proj = self.zcr_proj(zcr_feat).transpose(0, 1)
+        mel_proj = self.mel_proj(mel)         
+        mfcc_proj = self.mfcc_proj(mfcc_feat)
+        zcr_proj = self.zcr_proj(zcr_feat)
         
         # concatenate along sequence dimension
         combined = torch.cat([mel_proj, mfcc_proj, zcr_proj], dim=0)
