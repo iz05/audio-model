@@ -18,7 +18,7 @@ if tokenizer.pad_token is None:
 
 # load model
 MODEL_TYPE = "CNN"
-save_dir = f'/home/ixzhu/Qwen-Audio/checkpoints_{MODEL_TYPE}/checkpoint_epoch_2'
+save_dir = f'/home/ixzhu/Qwen-Audio/checkpoints_{MODEL_TYPE}/checkpoint_epoch_5'
 model = QWenLMHeadModelWithFeatures.from_pretrained(save_dir, device_map="cuda", trust_remote_code=True).eval()
 model.eval()
 
@@ -62,11 +62,11 @@ for (audio_url, question), gts in tqdm(unique_qs.items(), desc='Evaluating'):
         pad_token_id=tokenizer.eod_id,
         eos_token_id=tokenizer.eod_id,
     )
-    # print("Query: ", query)
+    print("Query: ", query)
     response = tokenizer.decode(pred.cpu()[0], skip_special_tokens=False,audio_info=audio_info)
-    # print("Raw response: ", response)
+    print("Raw response: ", response)
     filtered_response = response[prefix_length:].strip().split("<|endoftext|>")[0].strip()
-    # print("Filtered response: ", filtered_response, " Actual responses: ", gts)
+    print("Filtered response: ", filtered_response, " Actual responses: ", gts)
     results.append({
         'audio': audio_url,
         'question': question,
