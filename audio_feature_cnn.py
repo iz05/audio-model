@@ -265,6 +265,12 @@ class QWenModelCNN(QWenPreTrainedModel):
         if raw_audios is not None:
             projected_features = self.audio_feature_cnn(raw_audios)  # [total_audio_tokens, embed_dim]
 
+            eps = 1e-6
+            projected_features = projected_features / torch.sqrt(
+                (projected_features ** 2).mean(dim=-1, keepdim=True) + eps
+            )
+            projected_features = projected_features * 0.5  # optional scaling
+
             new_hidden_states = []
             for batch_idx in range(hidden_states.size(0)):
                 # select projected features for this batch

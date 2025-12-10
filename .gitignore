@@ -2,3 +2,4 @@ eval_audio/data
 eval_audio/__pycache__
 checkpoints/
 checkpoints_MLP/
+checkpoints_CNN/

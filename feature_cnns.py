@@ -105,7 +105,7 @@ class AudioFeatureCNN(nn.Module):
         zcr_feat = zero_crossing_rate(x, zero_handling="positive", frame_length = 400, hop_length = 160).to(torch.bfloat16).to(device)           # (batch, 1, seq_len_zcr)
 
         # project each feature
-        mel_proj = self.mel_proj(mel)         
+        mel_proj = self.mel_proj(mel)  
         mfcc_proj = self.mfcc_proj(mfcc_feat)
         zcr_proj = self.zcr_proj(zcr_feat)
         

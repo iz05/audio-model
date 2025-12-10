@@ -15,7 +15,7 @@ DEVICE = "cuda"
 PRETRAINED_MODEL = "Qwen/Qwen-Audio"
 BATCH_SIZE = 1
 LR = 1e-4
-EPOCHS = 2
+EPOCHS = 5
 MAX_SEQ_LEN = 512  # adjust if needed
 
 AUDIO_ROOT = "/home/ixzhu/Qwen-Audio/eval_audio/data/aqa/clothoqa/audio_files/"
@@ -26,7 +26,7 @@ class AudioQADataset(Dataset):
         self.df = pd.read_csv(csv_path)
 
         self.df = self.df.sample(frac=1, random_state=42).reset_index(drop=True)
-        half = len(self.df) // 2
+        half = len(self.df) // 100
         self.df = self.df.iloc[:half]      # keep first half only
 
         self.tokenizer = tokenizer
@@ -76,11 +76,11 @@ dataset = AudioQADataset("/home/ixzhu/Qwen-Audio/eval_audio/data/aqa/clotho_aqa_
 dataloader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True, collate_fn=lambda x: x)
 
 # --- 3. Load pretrained model and initialize with features ---
-MODEL_TYPE = 'MLP'
+MODEL_TYPE = 'CNN'
 pretrained_base = AutoModelForCausalLM.from_pretrained("Qwen/Qwen-Audio", device_map="cuda", trust_remote_code=True).eval()
 config = pretrained_base.config
 print("Initializing model...")
-model = QWenLMHeadModelWithFeatures(config).to(DEVICE)
+model = QWenLMHeadModelWithCNN(config).to(DEVICE)
 print("Finished intializing model.")
 
 # Load pretrained weights into matching parameters
@@ -95,7 +95,7 @@ print("Finished transferring weights.")
 # Freeze everything except audio_feature_project
 print("Freezing weights...")
 for name, param in model.named_parameters():
-    param.requires_grad = "audio_feature_proj" in name
+    param.requires_grad = "audio_feature_cnn" in name
 print("Finished freezing weights.")
 
 # --- 4. Optimizer & scheduler ---
@@ -136,18 +136,19 @@ for epoch in range(EPOCHS):
         except Exception as e:
             print(f"Training loop error: {e}")
     
-    checkpoint_path = os.path.join(save_dir, f"checkpoint_epoch_{epoch+1}")
-    model.save_pretrained(checkpoint_path)
-    tokenizer.save_pretrained(checkpoint_path)
-    torch.save(optimizer.state_dict(), os.path.join(checkpoint_path, "optimizer.pt"))
-    torch.save(scheduler.state_dict(), os.path.join(checkpoint_path, "scheduler.pt"))
-    
-    # save losses
-    loss_log_path = os.path.join(checkpoint_path, "losses.txt")
-    with open(loss_log_path, "w") as f:
-        for l in losses:
-            f.write(f"{l}\n")
+    if epoch == 4:
+        checkpoint_path = os.path.join(save_dir, f"checkpoint_epoch_{epoch+1}")
+        model.save_pretrained(checkpoint_path)
+        tokenizer.save_pretrained(checkpoint_path)
+        torch.save(optimizer.state_dict(), os.path.join(checkpoint_path, "optimizer.pt"))
+        torch.save(scheduler.state_dict(), os.path.join(checkpoint_path, "scheduler.pt"))
+        
+        # save losses
+        loss_log_path = os.path.join(checkpoint_path, "losses.txt")
+        with open(loss_log_path, "w") as f:
+            for l in losses:
+                f.write(f"{l}\n")
 
-    print(f"Saved checkpoint at end of epoch {epoch+1}")
+        print(f"Saved checkpoint at end of epoch {epoch+1}")
 
-    print(f"Epoch {epoch+1} finished. Last batch loss: {loss.item():.4f}")
+        print(f"Epoch {epoch+1} finished. Last batch loss: {loss.item():.4f}")
